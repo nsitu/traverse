@@ -6,6 +6,11 @@ SET tempVideo=%inputFile:.mp4=_tmp.mp4%
 SET theWidth=1
 SET theHeight=1
 SET theRotation=0
+SET sliceSize=%2
+IF "%~2"=="" ( SET sliceSize=2 )
+IF "%~2"=="0" ( SET sliceSize=2 )
+IF "%~2"=="1" ( SET sliceSize=2 )
+@echo Slice Thickness: %sliceSize% Pixels
 
 ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=s=x:p=0 %1 > tmpFile.txt 
 set /p theWidth= < tmpFile.txt 
@@ -29,10 +34,10 @@ IF %theWidth% gtr %theHeight% (
   @echo Treating as if a Portrait Width=%theHeight%, Height=%theWidth%
   @echo Slicing vertically at X Position: %ySlicePos%
   @echo Will transpose with Counterclockwise Rotation and Vertical flip.
-  ffmpeg -i %inputFile% -vf "crop=2:%theWidth%:%ySlicePos%:0,transpose=0" -an %tempVideo%
+  ffmpeg -i %inputFile% -vf "crop=%sliceSize%:%theWidth%:%ySlicePos%:0,transpose=0" -an %tempVideo%
  ) ELSE (
   @echo Slicing horizontally at Y Position: %ySlicePos%
-  ffmpeg -i %inputFile% -vf "crop=%theWidth%:2:0:%ySlicePos%" -an %tempVideo%
+  ffmpeg -i %inputFile% -vf "crop=%theWidth%:%sliceSize%:0:%ySlicePos%" -an %tempVideo%
  )
  @echo Smushing %tempVideo% into %outputFile%
  magick convert %tempVideo% -smush 0 -rotate 90 %outputFile% 
@@ -51,4 +56,5 @@ IF %theHeight% gtr %theWidth% (
  )
 )
 
-REM you could ask the user here if they want to delete %tempVideo%
+del %tempVideo%
+@echo Finished.
