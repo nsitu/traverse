@@ -1,5 +1,10 @@
 @echo off
 
+IF "%~1"=="" ( 
+@echo Usage: traverse.bat [string video.mp4] [int sliceThickness] 
+exit /b
+)
+
 SET inputFile=%1
 SET outputFile=%inputFile:.mp4=.tiff%
 SET tempVideo=%inputFile:.mp4=_tmp.mp4%
@@ -29,6 +34,7 @@ SET /A xSlicePos =  %theWidth% / 2
 
 IF %theWidth% gtr %theHeight% (
  @echo Landscape Width=%theWidth%, Height=%theHeight%
+REM you still need to account for a 270 degree rotation.
  IF %theRotation% EQU 90 (
   @echo Original file is rotated 90 degrees
   @echo Treating as if a Portrait Width=%theHeight%, Height=%theWidth%
@@ -36,8 +42,16 @@ IF %theWidth% gtr %theHeight% (
   @echo Will transpose with Counterclockwise Rotation and Vertical flip.
   ffmpeg -i %inputFile% -vf "crop=%sliceSize%:%theWidth%:%ySlicePos%:0,transpose=0" -an %tempVideo%
  ) ELSE (
+  IF %theRotation% EQU 270 (
+   @echo Original file is rotated 270 degrees
+   @echo Treating as if a Portrait Width=%theHeight%, Height=%theWidth%
+   @echo Slicing vertically at X Position: %ySlicePos%
+   @echo Will transpose with Counterclockwise Rotation and Vertical flip.
+   ffmpeg -i %inputFile% -vf "crop=%sliceSize%:%theWidth%:%ySlicePos%:0,transpose=0" -an %tempVideo%
+  ) ELSE (
   @echo Slicing horizontally at Y Position: %ySlicePos%
   ffmpeg -i %inputFile% -vf "crop=%theWidth%:%sliceSize%:0:%ySlicePos%" -an %tempVideo%
+  ) 
  )
  @echo Smushing %tempVideo% into %outputFile%
  magick convert %tempVideo% -smush 0 -rotate 90 %outputFile% 
