@@ -8,7 +8,7 @@ IF "%~1"=="" (
 @echo - Slices are re-assembled in sequence and saved as a panorama.
 @echo ------------------------
 @echo USAGE: traverse.bat [string inputFile] [int sliceThickness] [boolean doFlip]
-@echo - inputFile: any mp4 video
+@echo - inputFile: an mp4, or mkv video, or an avs script
 @echo - sliceThickness: width in pixels of rectangular slice to be derived from each frame
 @echo - doFlip: whether or not to flip slices. May help correct directional jaggedness
 @echo ------------------------
@@ -20,7 +20,11 @@ exit /b
 
 SET inputFile=%1
 SET outputFile=%inputFile:.mp4=.tiff%
+SET outputFile=%outputFile:.mkv=.tiff%
+SET outputFile=%outputFile:.avs=.tiff%
 SET tempVideo=%inputFile:.mp4=_tmp.mp4%
+SET tempVideo=%tempVideo:.mkv=_tmp.mkv%
+SET tempVideo=%tempVideo:.avs=_tmp.mp4%
 SET theWidth=1
 SET theHeight=1
 SET theRotation=0
