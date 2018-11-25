@@ -74,7 +74,7 @@ REM you still need to account for a 270 degree rotation.
   )
  )
  @echo Smushing %tempVideo% into %outputFile% using %doFlip% -smush
- magick convert %tempVideo% %doFlip% -smush 0 -rotate 90 %outputFile%
+ magick convert %tempVideo% %doFlip% -smush -1 -rotate 90 %outputFile%
 )
 
 
@@ -86,7 +86,7 @@ IF %theHeight% gtr %theWidth% (
   @echo Slicing vertically at X Position: %xSlicePos%
   ffmpeg -i %inputFile% -vf "crop=2:%theHeight%:%xSlicePos%:0" -an %tempVideo%
   @echo Smushing %tempVideo% into %outputFile% using %doFlip% +smush
-  magick convert %tempVideo% %doFlip% +smush 0 %outputFile%
+  magick convert %tempVideo% %doFlip% +smush -1 %outputFile%
  )
 )
 
