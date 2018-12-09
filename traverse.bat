@@ -3,14 +3,17 @@ SETLOCAL enabledelayedexpansion
 
 IF "%~1"=="" (
 @echo ===========================================================
-@echo  TRAVERSE: a tool to generate a cross section from a video
+@echo  TRAVERSE: generate a panoramic cross section from a video
 @echo ===========================================================
 @echo - All frames are cropped to 2px slices: e.g. 1920x2 pixels.
 @echo - Slices are re-assembled with 1px overlap in sequence
+@echo - Optional: set output panorama length in pixels
+@echo - Video is then 'stretched' to fit length via frame interpolation
 @echo - Output is saved as a panorama.
 @echo ------------------------
-@echo USAGE: traverse.bat [string inputFile]
-@echo - inputFile: an mp4, or mkv video, or an avs script
+@echo USAGE: traverse.bat filename [length]
+@echo - filename: an mp4, or mkv video
+@echo - length: desired pixel count for panorama, integer
 @echo ------------------------
 @echo OUTPUT: a TIFF image file is generated in the same folder
 @echo - The output file name will match that of the input file:
@@ -33,6 +36,11 @@ SET ffindexFile=!inputFile!.ffindex
 SET theWidth=1
 SET theHeight=1
 SET theRotation=0
+SET cropOption=
+SET smushOption=
+SET rotateOption=
+SET theOutputWidth=
+
 
 REM if a desired panorama size is given, calculate the necessary framerate
 REM and frame-interpolate the Video on the fly by generating an .avs script
@@ -82,7 +90,8 @@ IF "%~2" NEQ "" (
      @echo Desired Panorama Size: !panoramaSize! ^(via input^)
      @echo New Frame Rate: !theNewFrameRate! ^(calculated^)
 
-     REM designate a name for the avs file
+     REM Use AviSynth frame server for frame interpolation
+     REM Generate .avs file that employs the InterFrame script
      @echo FFmpegsource2^("!inputFile!"^)> !avsFile!
      @echo InterFrame^(Cores=4, Preset="Medium", Tuning="Film", NewNum=!theNewFrameRate!, NewDen=1, GPU=true^)>> !avsFile!
      @echo created !avsFile! to support frame interpolation.
@@ -91,67 +100,80 @@ IF "%~2" NEQ "" (
   )
 )
 
+REM calcuate width of input file
 ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=s=x:p=0 !inputFile! > !tempTxt!
 set /p theWidth= < !tempTxt!
 @echo video width for !inputFile! is !theWidth!px (via ffprobe)
 del !tempTxt!
 
+REM calcuate height of input file
 ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=s=x:p=0 !inputFile! > !tempTxt!
 set /p theHeight= < !tempTxt!
 @echo video height for !inputFile! is !theHeight!px (via ffprobe)
 del !tempTxt!
 
+REM calcuate rotation of input file
 ffprobe -loglevel error -select_streams v:0 -show_entries stream_tags=rotate -of default=nw=1:nk=1 -i !inputFile! > !tempTxt!
 set /p theRotation= < !tempTxt!
 @echo video rotation for !inputFile! is !theRotation! degrees (via ffprobe)
 del !tempTxt!
 
+REM by default, cross sections are taken in the middle of the video
+REM this position is either half the width, or half the height
 SET /A ySlicePos =  !theHeight! / 2
 SET /A xSlicePos =  !theWidth! / 2
 
 IF !theWidth! gtr !theHeight! (
  @echo Landscape Width=!theWidth!, Height=!theHeight!
-REM you still need to account for a 270 degree rotation.
+ @echo Original file is rotated !theRotation! degrees
  IF !theRotation! EQU 90 (
-  @echo Original file is rotated 90 degrees
   @echo Treating as if a Portrait Width=!theHeight!, Height=!theWidth!
   @echo Slicing vertically at X Position: !ySlicePos!
   @echo Will transpose with Counterclockwise Rotation and Vertical flip.
-  ffmpeg -i !inputFile! -vf "crop=2:!theWidth!:!ySlicePos!:0,transpose=0" -an !tempVideo!
+  SET cropOption=crop^=2^:!theWidth!^:!ySlicePos!^:0^,transpose^=0
  ) ELSE (
   IF !theRotation! EQU 270 (
-   @echo Original file is rotated 270 degrees
-   @echo Treating as if a Portrait Width=!theHeight!, Height=!theWidth!
-   @echo Slicing vertically at X Position: !ySlicePos!
-   @echo Will transpose with Counterclockwise Rotation and Vertical flip.
-   ffmpeg -i !inputFile! -vf "crop=2:!theWidth!:!ySlicePos!:0,transpose=0" -an !tempVideo!
+    @echo Treating as if a Portrait Width=!theHeight!, Height=!theWidth!
+    @echo Slicing vertically at X Position: !ySlicePos!
+    @echo Will transpose with Counterclockwise Rotation and Vertical flip.
+    SET cropOption=crop^=2^:!theWidth!^:!ySlicePos!^:0^,transpose^=0
   ) ELSE (
-  @echo Slicing horizontally at Y Position: !ySlicePos!
-  ffmpeg -i !inputFile! -vf "crop=!theWidth!:2:0:!ySlicePos!" -an !tempVideo!
+    @echo Slicing horizontally at Y Position: !ySlicePos!
+    SET cropOption=crop^=!theWidth!^:2^:0^:!ySlicePos!
   )
  )
- @echo Smushing !tempVideo! into !outputFile! using -smush
- magick convert !tempVideo! -smush -1 -rotate 90 !outputFile!
+ SET smushOption=^-smush^ ^-1
+ SET rotateOption=^-rotate^ 90
 )
-
-
 IF !theHeight! gtr !theWidth! (
  @echo Portrait Width=!theWidth!, Height=!theHeight!
  IF !theRotation! EQU 90 (
-  @echo Unexpected rotation issues. You do not normally have a natively vertical video with 90 degrees rotation. wtf.
+  @echo Unexpected rotation issues. You do not normally have a natively vertical video with 90 degrees rotation. wtf?
  ) ELSE (
   @echo Slicing vertically at X Position: !xSlicePos!
-  ffmpeg -i !inputFile! -vf "crop=2:!theHeight!:!xSlicePos!:0" -an !tempVideo!
-  @echo Smushing !tempVideo! into !outputFile! using +smush
-  magick convert !tempVideo! +smush -1 !outputFile!
+  SET cropOption=crop^=2^:!theHeight!^:!xSlicePos!^:0
  )
+ SET smushOption=^+smush^ ^-1
 )
+@echo Crop Option: !cropOption!
+@echo Cropping Video ffmpeg -i !inputFile! -vf !cropOption! -an !tempVideo!
+ffmpeg -i !inputFile! -vf !cropOption! -an !tempVideo!
+@echo Smushing !tempVideo! into !outputFile! using !smushOption!
+magick convert !tempVideo! !smushOption! !rotateOption! !outputFile!
 
+mediainfo --Inform="Image;%%Width%%" !outputFile! > TIFFWidth!tempTxt!
+SET /p theOutputWidth=<TIFFWidth!tempTxt!
+DEL TIFFWidth!tempTxt!
+mediainfo --Inform="Image;%%Height%%" !outputFile! > TIFFHeight!tempTxt!
+SET /p theOutputHeight=<TIFFHeight!tempTxt!
+DEL TIFFHeight!tempTxt!
 
-DEL !tempVideo! >nul 2>&1
-DEL !avsFile! >nul 2>&1
-DEL !tempTxt! >nul 2>&1
-DEL !ffindexFile!
+@echo Output File Generated: !outputFile!
+@echo TIFF Width: !theOutputWidth!px
+@echo TIFF Height: !theOutputHeight!px
+IF EXIST !tempVideo! DEL /F !tempVideo!
+IF EXIST !avsFile! DEL /F !avsFile!
+IF EXIST !tempTxt! DEL /F !tempTxt!
+IF EXIST !ffindexFile! DEL /F !ffindexFile!
 
-IF EXIST "inputFile" DEL /F "inputFile"
 @echo Finished.
