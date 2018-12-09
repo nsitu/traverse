@@ -11,9 +11,10 @@ IF "%~1"=="" (
 @echo - Video is then 'stretched' to fit length via frame interpolation
 @echo - Output is saved as a panorama.
 @echo ------------------------
-@echo USAGE: traverse.bat filename [length]
+@echo USAGE: traverse.bat filename [length] [envelope]
 @echo - filename: an mp4, or mkv video
 @echo - length: desired pixel count for panorama, integer
+@echo - envelope: slice crop options: linear|wobble|ramp
 @echo ------------------------
 @echo OUTPUT: a TIFF image file is generated in the same folder
 @echo - The output file name will match that of the input file:
@@ -27,6 +28,12 @@ REM use input file length to automate a ramp/envelope equation
 SET inputFile=%1
 SET panoramaSize=%2
 
+IF "%~3" NEQ "" (
+  SET cropEnvelope=%3
+) ELSE (
+  SET cropEnvelope=linear
+)
+
 FOR /F %%i in ("%1") do @SET baseName=%%~ni
 SET avsFile=!baseName!.avs
 SET outputFile=!baseName!.tiff
@@ -36,6 +43,7 @@ SET ffindexFile=!inputFile!.ffindex
 SET theWidth=1
 SET theHeight=1
 SET theRotation=0
+SET cropEquation=
 SET cropOption=
 SET smushOption=
 SET rotateOption=
@@ -103,19 +111,19 @@ IF "%~2" NEQ "" (
 REM calcuate width of input file
 ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=s=x:p=0 !inputFile! > !tempTxt!
 set /p theWidth= < !tempTxt!
-@echo video width for !inputFile! is !theWidth!px (via ffprobe)
+@echo video width for !inputFile! is !theWidth!px ^(via ffprobe^)
 del !tempTxt!
 
 REM calcuate height of input file
 ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=s=x:p=0 !inputFile! > !tempTxt!
 set /p theHeight= < !tempTxt!
-@echo video height for !inputFile! is !theHeight!px (via ffprobe)
+@echo video height for !inputFile! is !theHeight!px ^(via ffprobe^)
 del !tempTxt!
 
 REM calcuate rotation of input file
 ffprobe -loglevel error -select_streams v:0 -show_entries stream_tags=rotate -of default=nw=1:nk=1 -i !inputFile! > !tempTxt!
 set /p theRotation= < !tempTxt!
-@echo video rotation for !inputFile! is !theRotation! degrees (via ffprobe)
+@echo video rotation for !inputFile! is !theRotation! degrees ^(via ffprobe^)
 del !tempTxt!
 
 REM by default, cross sections are taken in the middle of the video
@@ -130,31 +138,53 @@ IF !theWidth! gtr !theHeight! (
   @echo Treating as if a Portrait Width=!theHeight!, Height=!theWidth!
   @echo Slicing vertically at X Position: !ySlicePos!
   @echo Will transpose with Counterclockwise Rotation and Vertical flip.
-  SET cropOption=crop^=2^:!theWidth!^:!ySlicePos!^:0^,transpose^=0
+  IF "!cropEnvelope!" EQU "wobble" (
+    SET cropEquation=^(iw^-ow^)^/^2^+^(^(iw^-ow^)^/^2^)^*sin^(^t^)
+    SET cropOption=crop^=^2^:!theWidth!^:!cropEquation!^:^0^,^transpose^=^0
+  ) ELSE (
+    SET cropOption=crop^=^2^:!theWidth!^:!ySlicePos!^:^0^,^transpose^=^0
+  )
  ) ELSE (
   IF !theRotation! EQU 270 (
     @echo Treating as if a Portrait Width=!theHeight!, Height=!theWidth!
     @echo Slicing vertically at X Position: !ySlicePos!
     @echo Will transpose with Counterclockwise Rotation and Vertical flip.
-    SET cropOption=crop^=2^:!theWidth!^:!ySlicePos!^:0^,transpose^=0
+    IF "!cropEnvelope!" EQU "wobble" (
+      SET cropEquation=^(iw^-ow^)^/^2^+^(^(iw^-ow^)^/^2^)^*sin^(^t^)
+      SET cropOption=crop^=^2^:!theWidth!^:!cropEquation!^:^0^,^transpose^=^0
+    ) ELSE (
+      SET cropOption=crop^=2^:!theWidth!^:!ySlicePos!^:0^,transpose^=0
+    )
   ) ELSE (
-    @echo Slicing horizontally at Y Position: !ySlicePos!
-    SET cropOption=crop^=!theWidth!^:2^:0^:!ySlicePos!
+    IF "!cropEnvelope!" EQU "wobble" (
+      @echo Slicing horizontally at Y Position: !ySlicePos!
+      SET cropEquation=^(ih^-oh^)^/^2^+^(^(ih^-oh^)^/^2^)^*sin^(^t^)
+      SET cropOption=crop^=!theWidth!^:2^:^0^:!cropEquation!
+    ) ELSE (
+      @echo Slicing horizontally at Y Position: !ySlicePos!
+      SET cropOption=crop^=!theWidth!^:2^:0^:!ySlicePos!
+    )
   )
  )
- SET smushOption=^-smush^ ^-1
- SET rotateOption=^-rotate^ 90
+ SET smushOption=^-smush^ ^-^1
+ SET rotateOption=^-rotate^ ^9^0
 )
 IF !theHeight! gtr !theWidth! (
  @echo Portrait Width=!theWidth!, Height=!theHeight!
  IF !theRotation! EQU 90 (
   @echo Unexpected rotation issues. You do not normally have a natively vertical video with 90 degrees rotation. wtf?
  ) ELSE (
-  @echo Slicing vertically at X Position: !xSlicePos!
-  SET cropOption=crop^=2^:!theHeight!^:!xSlicePos!^:0
+   IF "!cropEnvelope!" EQU "wobble" (
+     SET cropEquation=^(iw^-ow^)^/^2^+^(^(iw^-ow^)^/^2^)^*sin^(^t^)
+     SET cropOption=crop^=!theWidth!^:2^:^0^:!cropEquation!
+   ) ELSE (
+     @echo Slicing vertically at X Position: !xSlicePos!
+     SET cropOption=crop^=2^:!theHeight!^:!xSlicePos!^:0
+   )
  )
  SET smushOption=^+smush^ ^-1
 )
+@echo Crop Envelope: !cropEnvelope!
 @echo Crop Option: !cropOption!
 @echo Cropping Video ffmpeg -i !inputFile! -vf !cropOption! -an !tempVideo!
 ffmpeg -i !inputFile! -vf !cropOption! -an !tempVideo!
