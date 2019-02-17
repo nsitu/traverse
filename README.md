@@ -16,6 +16,10 @@ The following command will result in a tiff file 20000 pixels wide. The height o
 
 C:\>traverse.bat video.mp4 20000
 
-# Installing ffmpeg and image magick
+# Installing ffmpeg, imagemagick, AviSynth-Plus
+
 https://www.wikihow.com/Install-FFmpeg-on-Windows
+
 https://imagemagick.org/script/download.php
+
+https://www.videohelp.com/software/AviSynth-Plus
