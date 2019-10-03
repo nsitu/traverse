@@ -30,6 +30,7 @@ https://www.wikihow.com/Install-FFmpeg-on-Windows
 https://imagemagick.org/script/download.php  
 https://www.videohelp.com/software/AviSynth-Plus  
 https://github.com/FFMS/ffms2/releases  
+http://www.svp-team.com/files/gpl/svpflow-4.2.0.142.zip  
 https://www.spirton.com/interframe/  
 https://mediaarea.net/en/MediaInfo/Download/Windows  
   
@@ -47,8 +48,7 @@ This can be used as a plugin that allows avisynth to open .mp4 files.
 Just dump the x86/64 versions of the ffms2.dll into the AviSynth plugins folders  
 C:\Program Files (x86)\AviSynth+\plugins  
 C:\Program Files (x86)\AviSynth+\plugins64  
-  
-# You can then do something like this in an .avs file:  
+You can then do something like this in an .avs file:  
 FFmpegsource2("video.mp4")  
   
 # SVPFlow  
