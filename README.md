@@ -29,8 +29,8 @@ e.g. 'content.tiff' results in 'content.mp4'
 https://www.wikihow.com/Install-FFmpeg-on-Windows  
 https://imagemagick.org/script/download.php  
 https://www.videohelp.com/software/AviSynth-Plus  
-https://github.com/FFMS/ffms2/releases  
-http://www.svp-team.com/files/gpl/svpflow-4.2.0.142.zip  
+https://github.com/FFMS/ffms2/releases    
+http://www.svp-team.com/files/gpl/svpflow-4.3.0.168.zip
 https://www.spirton.com/interframe/  
 https://mediaarea.net/en/MediaInfo/Download/Windows  
   
@@ -56,7 +56,8 @@ There are some DLLs from the smooth video project (SVP) that you need to do inte
 svpflow1.dll: a motion vectors search plugin  
 svpflow2.dll: A closed-source frame rendering plugin.  
 Get information here: https://www.svp-team.com/wiki/Download#libs  
-Get a direct Download here: http://www.svp-team.com/files/gpl/svpflow-4.2.0.142.zip  
+Get a direct Download here: http://www.svp-team.com/files/gpl/svpflow-4.3.0.168.zip
+Previous Version:  http://www.svp-team.com/files/gpl/svpflow-4.2.0.142.zip  
 In my case I used the 64 bit versions.  
 These are named svpflow1_64.dll and svpflow2_64.dll and are included inside of the zip: in the folder lib-windows\avisynth\x64  
 In my case I copied these to C:\Program Files (x86)\AviSynth+\plugins64  
