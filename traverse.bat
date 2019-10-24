@@ -40,7 +40,7 @@ IF "%~3" NEQ "" (
 FOR /F %%i in ("%1") do @SET baseName=%%~ni
 SET avsFile=!baseName!.avs
 SET outputFile=!baseName!.tiff
-SET tempVideo=!baseName!_tmp.mp4
+SET tempVideo=!baseName!_tmp.avi
 SET tempTxt=!inputFile!_tmp.txt
 SET ffindexFile=!inputFile!.ffindex
 SET theWidth=1
@@ -233,8 +233,9 @@ IF !theHeight! gtr !theWidth! (
 )
 @echo Crop Envelope: !cropEnvelope!
 @echo Crop Option: !cropOption!
-@echo Cropping Video ffmpeg -i !inputFile! -vf !cropOption! -an !tempVideo!
-ffmpeg -i !inputFile! -vf !cropOption! -an !tempVideo!
+@echo Cropping Video ffmpeg -i !inputFile! -vf !cropOption! -an  -vcodec rawvideo -y !tempVideo!
+REM we use raw video as an intermediary rather than costly-to-encode mp4
+ffmpeg -i !inputFile! -vf !cropOption! -an -vcodec rawvideo -y !tempVideo!
 @echo Smushing !tempVideo! into !outputFile! using !smushOption!
 magick convert !tempVideo! !smushOption! !rotateOption! !outputFile!
 
