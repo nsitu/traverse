@@ -29,7 +29,7 @@ SET inputFile=%1
 SET panoramaSize=%2
 
 REM cropEnvelope may be ramp or wobble or linear
-REM TODO: run tests to confirm that ramp is working. 
+REM TODO: run tests to confirm that ramp is working.
 REM TODO: adapt the RAMP to work in inverse (eg from 1080>0 instead of 0>1080)
 IF "%~3" NEQ "" (
   SET cropEnvelope=%3
@@ -108,8 +108,13 @@ IF "%~2" NEQ "" (
        REM TODO: Research which Preset is optimal:
        REM e.g. DOes "Fastest" come at the cost of filesize? or quality?
        REM (filesize would be fine but quality would  not be)
-       @echo FFmpegsource2^("!inputFile!"^)> !avsFile!
-       @echo InterFrame^(Cores=4, Preset="Fastest", Tuning="Film", NewNum=!theNewFrameRate!, NewDen=1, GPU=true^)>> !avsFile!
+       REM AviSynth+ multithreading notes here: http://avisynth.nl/index.php/AviSynth+#MT_Notes
+       REM might need to test how many cores are available
+
+       @echo SetFilterMTMode^("DEFAULT_MT_MODE", 2^)> !avsFile!
+       @echo FFmpegsource2^("!inputFile!"^)>> !avsFile!
+       @echo InterFrame^(Cores=8, Preset="Fastest", Tuning="Film", NewNum=!theNewFrameRate!, NewDen=1, GPU=true^)>> !avsFile!
+       @echo Prefetch^(8^)>> !avsFile!
        @echo created !avsFile! to support frame interpolation.
        @echo changing frame rate from !theFrameRate! to !theNewFrameRate!
        SET inputFile=!avsFile!
