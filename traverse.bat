@@ -9,16 +9,17 @@ IF "%~1"=="" (
 @echo - Slices are re-assembled with 1px overlap in sequence
 @echo - Optional: set output panorama length in pixels
 @echo - Video is then 'stretched' to fit length via frame interpolation
-@echo - Output is saved as a panorama.
+@echo - Output is saved as a panorama_envelope.tiff
 @echo ------------------------
 @echo USAGE: traverse.bat filename [length] [envelope]
 @echo - filename: an mp4, or mkv video
 @echo - length: desired pixel count for panorama, integer
-@echo - envelope: slice crop options: linear|wobble|ramp
+@echo - envelope: slice crop options: ###|linear|wobble|ramp
 @echo ------------------------
 @echo OUTPUT: a TIFF image file is generated in the same folder
 @echo - The output file name will match that of the input file:
-@echo - e.g. 'content.mp4' results in 'content.tiff'
+@echo - The envelope settings will be appended
+@echo - e.g. 'content.mp4' results in 'content_envelope.tiff'
 exit /b
 )
 
@@ -28,9 +29,11 @@ REM use input file length to automate a ramp/envelope equation
 SET inputFile=%1
 SET panoramaSize=%2
 
-REM cropEnvelope may be ramp or wobble or linear
+REM cropEnvelope may be numeric ###, or otherwise it may be "ramp" or "wobble" or "linear"
+REM when it is numeric, we interpret the number as a linear position.
 REM TODO: run tests to confirm that ramp is working.
 REM TODO: adapt the RAMP to work in inverse (eg from 1080>0 instead of 0>1080)
+
 IF "%~3" NEQ "" (
   SET cropEnvelope=%3
 ) ELSE (
@@ -39,7 +42,7 @@ IF "%~3" NEQ "" (
 
 FOR /F %%i in ("%1") do @SET baseName=%%~ni
 SET avsFile=!baseName!.avs
-SET outputFile=!baseName!.tiff
+SET outputFile=!baseName!_!cropEnvelope!.tiff
 SET tempVideo=!baseName!_tmp.avi
 SET tempTxt=!inputFile!_tmp.txt
 SET ffindexFile=!inputFile!.ffindex
@@ -59,7 +62,14 @@ REM and frame-interpolate the Video on the fly by generating an .avs script
 REM a panoramaSize of 0 is interpreted as "match the frame count"
 IF "%~2" NEQ "" (
 
-    @echo Requested panorama size: !panoramaSize!
+
+    if !panoramaSize! EQU 0 (
+      @echo Default Panorama size requested via zero parameter. Frame count will be used.
+    ) else (
+      @echo Requested panorama size: !panoramaSize!
+    )
+
+
     REM we will need vbscript to do floating point math.
     REM therefore step 1 is to create a vbs script
     REM start with a clean slate
@@ -76,12 +86,18 @@ IF "%~2" NEQ "" (
     DEL FR!tempTxt!
 
     REM derive (approximate) frame count from duration and frame rate
-    FOR /f %%n in ('cscript //nologo eval.vbs "(!theDuration!/1000)*!theFrameRate!"') do ( SET theFrameCount=%%n )
+    FOR /f %%n in ('cscript //nologo eval.vbs "CInt((!theDuration!/1000)*!theFrameRate!)"') do ( SET theFrameCount=%%n )
 
     REM output calculated values
     @echo Duration: !theDuration! milliseconds ^(via mediainfo^)
     @echo FrameRate: !theFrameRate! frames per second ^(via mediainfo^)
     @echo Frame Count: !theFrameCount! frames ^(calculated^)
+
+    REM if 0 is given for panoramaSize, we will use the frameCount.
+    if !panoramaSize! EQU 0 (
+        @echo Panorama size set to !theFrameCount!
+        SET panoramaSize=!theFrameCount!
+    )
 
     REM if the framecount is already large enough
     REM (i.e. if the framecount meets or exceeds the desired panorama size)
@@ -133,18 +149,56 @@ set /p theHeight= < !tempTxt!
 @echo video height for !inputFile! is !theHeight!px ^(via ffprobe^)
 del !tempTxt!
 
-
-
 REM calcuate rotation of input file
 ffprobe -loglevel error -select_streams v:0 -show_entries stream_tags=rotate -of default=nw=1:nk=1 -i !inputFile! > !tempTxt!
 set /p theRotation= < !tempTxt!
 @echo video rotation for !inputFile! is !theRotation! degrees ^(via ffprobe^)
 del !tempTxt!
 
-REM by default, cross sections are taken in the middle of the video
+
+REM If we have a numeric value for the cross section slice Position, use it.
+REM Otherwise default to a cross section are taken in the middle of the video
 REM this position is either half the width, or half the height
-SET /A ySlicePos =  !theHeight! / 2
-SET /A xSlicePos =  !theWidth! / 2
+
+echo("!cropEnvelope!"|findstr "^[\"][-][1-9][0-9]*[\"]$ ^[\"][1-9][0-9]*[\"]$ ^[\"]0[\"]$">nul&&set /A isNum=1||set /A isNum=0
+
+
+IF !isNum! gtr 0 (
+  @echo Provided numeric slice position !cropEnvelope! will inform location of cross section where applicable.
+  REM GEQ means greater than or equal to
+
+  IF !cropEnvelope! GEQ !theHeight! (
+    @echo Input !cropEnvelope! matches or exceeds video height !theHeight!
+    @echo Affected slices will be positioned at !theHeight! instead of !cropEnvelope!
+    SET /A ySlicePos =  !theHeight!
+  ) ELSE (
+    @echo Input !cropEnvelope! falls within the bounds of video height !theHeight!
+    @echo Affected slices will be positioned at !cropEnvelope!
+    SET /A ySlicePos =  !cropEnvelope!
+  )
+
+  REM we should test whether you can actually do a slice or not on the 1st and final pixel.
+  REM if not you may need to +1 or -1 as appropriate.
+  IF !cropEnvelope! GEQ !theWidth! (
+    @echo Input !cropEnvelope! matches or exceeds video width !theWidth!
+    @echo Affected slices will be positioned at !theWidth! instead of !cropEnvelope!
+    SET /A xSlicePos = !theWidth!
+  ) ELSE (
+    @echo Input !cropEnvelope! falls within the bounds of video width !theWidth!
+    @echo Affected slices will be positioned at !cropEnvelope!
+    SET /A xSlicePos = !cropEnvelope!
+  )
+
+) ELSE (
+
+  REM if no numeric input is given default to a cross section taken in the middle of the video
+  SET /A ySlicePos =  !theHeight! / 2
+  SET /A xSlicePos =  !theWidth! / 2
+  @echo No numeric input has been given to specify the position of any cross section
+  @echo Slicing will proceed with a centeral position
+  @echo Horizontal slices will assume !ySlicePos! or half of !theHeight!
+  @echo Vertical slices will assume !xSlicePos! or half of !theWidth!
+)
 
 
 REM calculate rotation needed for optimal hypotenuse section.
@@ -154,6 +208,8 @@ FOR /f %%n in ('cscript //nologo eval.vbs "Atn(!theHeight!/!theWidth!)*180/(4*At
 
 
 IF !theWidth! gtr !theHeight! (
+
+
  @echo Landscape Width=!theWidth!, Height=!theHeight!
  @echo Original file is rotated !theRotation! degrees
  IF !theRotation! EQU 90 (
@@ -168,6 +224,7 @@ IF !theWidth! gtr !theHeight! (
       @echo Slicing via Dynamic Ramp: !cropEquation!
     ) ELSE (
       SET cropEquation=!ySlicePos!
+
       @echo Slicing vertically via fixed X Position: !ySlicePos!
     )
   )
@@ -233,11 +290,16 @@ IF !theHeight! gtr !theWidth! (
 )
 @echo Crop Envelope: !cropEnvelope!
 @echo Crop Option: !cropOption!
-@echo Cropping Video ffmpeg -i !inputFile! -vf !cropOption! -an  -vcodec rawvideo -y !tempVideo!
-REM we use raw video as an intermediary rather than costly-to-encode mp4
-ffmpeg -i !inputFile! -vf !cropOption! -an -vcodec rawvideo -y !tempVideo!
+@echo Cropping Video ffmpeg -i !inputFile! -vf !cropOption! -an !tempVideo!
+ ffmpeg -i !inputFile! -vf !cropOption! -an -vcodec rawvideo -y !tempVideo!
+ REM ffmpeg -i !inputFile! -vf !cropOption! -an !tempVideo!
+rem ffmpeg -i !inputFile! -vf !cropOption! -an %%05d.ppm
+REM ffmpeg -i !tempVideo!
 @echo Smushing !tempVideo! into !outputFile! using !smushOption!
-magick convert !tempVideo! !smushOption! !rotateOption! !outputFile!
+rem magick convert *.ppm !smushOption! !rotateOption! !outputFile!
+ magick convert !tempVideo! !smushOption! !rotateOption! !outputFile!
+
+rem del *.ppm
 
 mediainfo --Inform="Image;%%Width%%" !outputFile! > TIFFWidth!tempTxt!
 SET /p theOutputWidth=<TIFFWidth!tempTxt!
