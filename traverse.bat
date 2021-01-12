@@ -40,12 +40,32 @@ IF "%~3" NEQ "" (
   SET cropEnvelope=linear
 )
 
+echo("!cropEnvelope!"|findstr "^[\"][-][1-9][0-9]*[\"]$ ^[\"][1-9][0-9]*[\"]$ ^[\"]0[\"]$">nul&&set /A isNum=1||set /A isNum=0
+
+
+IF !isNum! gtr 0 (
+  REM it is useful to mark the output file with an Id number corresponding to numeric slice position input
+  REM it is especially useful to do this with predictable padding of zeroes.
+  REM in this way we can further process a series of images as numbered frames in a new video.
+  REM for example: ffmpeg -i img%08d.tiff output.mp4
+
+  SET /A fileID = !cropEnvelope!
+  REM Add a bunch of zeroes for padding
+  SET fileID=0000000!fileID!
+  REM only keep the final 8 digits ... should be plenty
+  SET fileID=!fileID:~-8!
+) else (
+  REM if we dont have numeric input it remains useful to mark output with the string cropEnvelope
+  SET fileID = !cropEnvelope!
+)
+
 FOR /F %%i in ("%1") do @SET baseName=%%~ni
-SET avsFile=!baseName!.avs
-SET outputFile=!baseName!_!cropEnvelope!.tiff
-SET tempVideo=!baseName!_tmp.avi
-SET tempTxt=!inputFile!_tmp.txt
-SET ffindexFile=!inputFile!.ffindex
+SET avsFile=!baseName!_!fileID!.avs
+SET outputFile=!baseName!_!fileID!.tiff
+SET tempVideo=!baseName!_!fileID!.avi
+SET tempTxt=!inputFile!_!fileID!_tmp.txt
+SET ffindexFile=!inputFile!_!fileID!.ffindex
+SET vbsFile=!inputFile!_!fileID!_eval.vbs
 SET theWidth=1
 SET theHeight=1
 SET theRotation=0
@@ -74,8 +94,8 @@ IF "%~2" NEQ "" (
     REM therefore step 1 is to create a vbs script
     REM start with a clean slate
 
-    DEL "eval.vbs" >nul 2>&1
-    @ECHO WScript.Echo Eval^(WScript.Arguments^(0^)^) > "eval.vbs"
+    DEL !vbsFile! >nul 2>&1
+    @ECHO WScript.Echo Eval^(WScript.Arguments^(0^)^) > "!vbsFile!"
 
     REM get duration and framerate info from the input file using mediainfo
     mediainfo --Inform="Video;%%Duration%%" !inputFile! > DUR!tempTxt!
@@ -86,7 +106,7 @@ IF "%~2" NEQ "" (
     DEL FR!tempTxt!
 
     REM derive (approximate) frame count from duration and frame rate
-    FOR /f %%n in ('cscript //nologo eval.vbs "CInt((!theDuration!/1000)*!theFrameRate!)"') do ( SET theFrameCount=%%n )
+    FOR /f %%n in ('cscript //nologo !vbsFile! "CInt((!theDuration!/1000)*!theFrameRate!)"') do ( SET theFrameCount=%%n )
 
     REM output calculated values
     @echo Duration: !theDuration! milliseconds ^(via mediainfo^)
@@ -102,7 +122,7 @@ IF "%~2" NEQ "" (
     REM if the framecount is already large enough
     REM (i.e. if the framecount meets or exceeds the desired panorama size)
     REM then we dont need to do any interpolation
-    FOR /f %%n in ('cscript //nologo eval.vbs "!panoramaSize!>!theFrameCount!"') do (
+    FOR /f %%n in ('cscript //nologo !vbsFile! "!panoramaSize!>!theFrameCount!"') do (
       SET doInterpolation=%%n
     )
 
@@ -113,7 +133,7 @@ IF "%~2" NEQ "" (
       @ECHO Framecount !theFrameCount! is less than the desired panorama size !panoramaSize!
       @ECHO Therefore we will do some frame interpolation.
       REM calculate framerate for interpolation to achieve desired panorama size
-      FOR /f %%n in ('cscript //nologo eval.vbs "CInt((!panoramaSize!/!theFrameCount!)*!theFrameRate!)"') do (  SET theNewFrameRate=%%n  )
+      FOR /f %%n in ('cscript //nologo !vbsFile! "CInt((!panoramaSize!/!theFrameCount!)*!theFrameRate!)"') do (  SET theNewFrameRate=%%n  )
        REM output the calculated values
 
        @echo Desired Panorama Size: !panoramaSize! ^(via input^)
@@ -160,7 +180,7 @@ REM If we have a numeric value for the cross section slice Position, use it.
 REM Otherwise default to a cross section are taken in the middle of the video
 REM this position is either half the width, or half the height
 
-echo("!cropEnvelope!"|findstr "^[\"][-][1-9][0-9]*[\"]$ ^[\"][1-9][0-9]*[\"]$ ^[\"]0[\"]$">nul&&set /A isNum=1||set /A isNum=0
+
 
 
 IF !isNum! gtr 0 (
@@ -203,7 +223,7 @@ IF !isNum! gtr 0 (
 
 REM calculate rotation needed for optimal hypotenuse section.
 REM "Atn(height/width)*180/(4*Atn(1))"
-FOR /f %%n in ('cscript //nologo eval.vbs "Atn(!theHeight!/!theWidth!)*180/(4*Atn(1))"') do ( SET theOptimalRotation=%%n )
+FOR /f %%n in ('cscript //nologo !vbsFile! "Atn(!theHeight!/!theWidth!)*180/(4*Atn(1))"') do ( SET theOptimalRotation=%%n )
 @echo Optimal Rotation is TAN-1(!theHeight!/!theWidth!)*180/PI: !theOptimalRotation!
 
 
@@ -315,5 +335,6 @@ IF EXIST !tempVideo! DEL /F !tempVideo!
 IF EXIST !avsFile! DEL /F !avsFile!
 IF EXIST !tempTxt! DEL /F !tempTxt!
 IF EXIST !ffindexFile! DEL /F !ffindexFile!
+IF EXIST !vbsFile! DEL /F !vbsFile!
 
 @echo Finished.
