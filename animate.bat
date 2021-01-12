@@ -98,6 +98,7 @@ FOR /L %%A IN (1,1,%numberOfFrames%) DO (
 @echo ----
 @echo Finished rendering %numberOfFrames% frames.
 @echo Assembling frame sequence as video.
-ffmpeg -i !baseName!_%08d.tiff !baseName!_animation.mp4
+REM ffmpeg -i rf-small_%08d.tiff rf-small_animation.mp4
+ffmpeg -i !baseName!_^%^0^8^d.tiff !baseName!_animation.mp4
 @echo Video rendering complete:
 @echo !baseName!_animation.mp4
