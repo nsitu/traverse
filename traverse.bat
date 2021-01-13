@@ -63,6 +63,7 @@ FOR /F %%i in ("%1") do @SET baseName=%%~ni
 SET avsFile=!baseName!_!fileID!.avs
 SET outputFile=!baseName!_!fileID!.tiff
 SET tempVideo=!baseName!_!fileID!.avi
+SET tempFolder=!baseName!_!fileID!_slices
 SET tempTxt=!inputFile!_!fileID!_tmp.txt
 SET ffindexFile=!inputFile!_!fileID!.ffindex
 SET vbsFile=!inputFile!_!fileID!_eval.vbs
@@ -72,13 +73,31 @@ SET theRotation=0
 SET theOptimalRotation=0
 SET cropEquation=
 SET cropOption=
+SET cropOptionTwo=
 SET smushOption=
 SET rotateOption=
 SET theOutputWidth=
 
 
-REM if a desired panorama size is given, calculate the necessary framerate
-REM and frame-interpolate the Video on the fly by generating an .avs script
+REM Fetch info about duration, frame rate, frame count, etc
+DEL !vbsFile! >nul 2>&1
+@ECHO WScript.Echo Eval^(WScript.Arguments^(0^)^) > "!vbsFile!"
+REM get duration and framerate info from the input file using mediainfo
+mediainfo --Inform="Video;%%Duration%%" !inputFile! > DUR!tempTxt!
+SET /p theDuration=<DUR!tempTxt!
+DEL DUR!tempTxt!
+mediainfo --Inform="Video;%%FrameRate%%" !inputFile! > FR!tempTxt!
+SET /p theFrameRate=<FR!tempTxt!
+DEL FR!tempTxt!
+REM derive (approximate) frame count from duration and frame rate
+FOR /f %%n in ('cscript //nologo !vbsFile! "CInt((!theDuration!/1000)*!theFrameRate!)"') do ( SET theFrameCount=%%n )
+REM output calculated values
+@echo Duration: !theDuration! milliseconds ^(via mediainfo^)
+@echo FrameRate: !theFrameRate! frames per second ^(via mediainfo^)
+@echo Frame Count: !theFrameCount! frames ^(calculated^)
+
+
+REM if a desired panorama size is given, frame-interpolate the Video on the fly by generating an .avs script
 REM a panoramaSize of 0 is interpreted as "match the frame count"
 IF "%~2" NEQ "" (
 
@@ -94,24 +113,6 @@ IF "%~2" NEQ "" (
     REM therefore step 1 is to create a vbs script
     REM start with a clean slate
 
-    DEL !vbsFile! >nul 2>&1
-    @ECHO WScript.Echo Eval^(WScript.Arguments^(0^)^) > "!vbsFile!"
-
-    REM get duration and framerate info from the input file using mediainfo
-    mediainfo --Inform="Video;%%Duration%%" !inputFile! > DUR!tempTxt!
-    SET /p theDuration=<DUR!tempTxt!
-    DEL DUR!tempTxt!
-    mediainfo --Inform="Video;%%FrameRate%%" !inputFile! > FR!tempTxt!
-    SET /p theFrameRate=<FR!tempTxt!
-    DEL FR!tempTxt!
-
-    REM derive (approximate) frame count from duration and frame rate
-    FOR /f %%n in ('cscript //nologo !vbsFile! "CInt((!theDuration!/1000)*!theFrameRate!)"') do ( SET theFrameCount=%%n )
-
-    REM output calculated values
-    @echo Duration: !theDuration! milliseconds ^(via mediainfo^)
-    @echo FrameRate: !theFrameRate! frames per second ^(via mediainfo^)
-    @echo Frame Count: !theFrameCount! frames ^(calculated^)
 
     REM if 0 is given for panoramaSize, we will use the frameCount.
     if !panoramaSize! EQU 0 (
@@ -249,6 +250,9 @@ IF !theWidth! gtr !theHeight! (
     )
   )
   SET cropOption=crop^=^2^:!theWidth!^:!cropEquation!^:^0^,^transpose^=^0
+  REM Videos can't crop below 2 px; finish the job with cropOptionTwo at the tiff stage
+  SET cropOptionTwo=crop^=^1^:!theWidth!^:0^:^0^,^transpose^=^0
+
  ) ELSE (
   IF !theRotation! EQU 270 (
     @echo Treating as if a Portrait Width=!theHeight!, Height=!theWidth!
@@ -267,6 +271,8 @@ IF !theWidth! gtr !theHeight! (
       )
     )
     SET cropOption=crop^=^2^:!theWidth!^:!cropEquation!^:^0^,^transpose^=^0
+    REM Videos can't crop below 2 px; finish the job with cropOptionTwo at the tiff stage
+    SET cropOptionTwo=crop^=^1^:!theWidth!^:0^:0^,^transpose^=0
   ) ELSE (
     REM if we got here then there is no rotation (video is standard)
     IF "!cropEnvelope!" EQU "wobble" (
@@ -282,6 +288,8 @@ IF !theWidth! gtr !theHeight! (
       )
     )
     SET cropOption=crop^=!theWidth!^:2^:^0^:!cropEquation!
+    REM Videos can't crop below 2 px; finish the job with cropOptionTwo at the tiff stage
+    SET cropOptionTwo=crop^=!theWidth!^:1^:0^:0
   )
  )
  SET smushOption=^-smush^ ^-^1
@@ -305,21 +313,55 @@ IF !theHeight! gtr !theWidth! (
      )
    )
    SET cropOption=crop^=!theWidth!^:2^:!cropEquation!^:0
+   REM Videos can't crop below 2 px; finish the job with cropOptionTwo at the tiff stage
+   SET cropOptionTwo=crop^=!theWidth!^:1^:0^:0
  )
  SET smushOption=^+smush^ ^-1
 )
+@echo ==================
 @echo Crop Envelope: !cropEnvelope!
 @echo Crop Option: !cropOption!
 @echo Cropping Video ffmpeg -i !inputFile! -vf !cropOption! -an !tempVideo!
- ffmpeg -i !inputFile! -vf !cropOption! -an -vcodec rawvideo -y !tempVideo!
+
+REM in ffmpeg you can disable audio with the -an flag
+REM in ffmpeg you can overwrite output file with the -y flag
+
+REM perhaps we should use an image sequence instead.
+REM ffmpeg -i video.webm -ss 00:00:10 -vframes 1 thumbnail.png
+REM ffmpeg -i video.webm -vf fps=!theFrameRate!
+
+@echo Creating temporary folder !tempFolder! to hold slices
+if not exist "!tempFolder!" mkdir "!tempFolder!%"
+
+REM saving to TIFF files per-frame yields 122 fps.
+REM it's faster when i don't specify a format ~130
+@echo ==================
+@echo Extracting Two-pixel-wide TIFF slices from video.
+ffmpeg -i !inputFile! -vf !cropOption! -an -y -compression_algo raw -pix_fmt rgb24 !tempFolder!/img-%%08d.tiff
+
+
+ REM ffmpeg -i !inputFile! -vf !cropOption! -an -vcodec rawvideo -y !tempVideo!
  REM ffmpeg -i !inputFile! -vf !cropOption! -an !tempVideo!
 rem ffmpeg -i !inputFile! -vf !cropOption! -an %%05d.ppm
 REM ffmpeg -i !tempVideo!
-@echo Smushing !tempVideo! into !outputFile! using !smushOption!
+REM @echo Smushing !tempVideo! into !outputFile! using !smushOption!
 rem magick convert *.ppm !smushOption! !rotateOption! !outputFile!
- magick convert !tempVideo! !smushOption! !rotateOption! !outputFile!
 
-rem del *.ppm
+REM Error initializing filter 'tile' with args '1x677:margin=-1'
+@echo ==================
+@echo Cropping !theFrameCount! TIFFs into One-pixel slices
+ffmpeg -i !tempFolder!/img-%%08d.tiff -filter:v "!cropOptionTwo!" !tempFolder!/img-%%08d.tiff
+
+@echo ==================
+@echo Tiling !theFrameCount! TIFFs into a single image.
+ffmpeg -i !tempFolder!/img-%%08d.tiff -filter_complex tile=1x!theFrameCount! !outputFile!
+REM magick convert !tempVideo! !smushOption! !rotateOption! !outputFile!
+
+@echo ==================
+@echo Removing temporary TIFF slices.
+IF EXIST !tempFolder! DEL /F /Q !tempFolder!
+@echo Removing temporary slice folder !tempFolder!
+IF EXIST !tempFolder! RMDIR /S /Q !tempFolder!
 
 mediainfo --Inform="Image;%%Width%%" !outputFile! > TIFFWidth!tempTxt!
 SET /p theOutputWidth=<TIFFWidth!tempTxt!
@@ -331,7 +373,8 @@ DEL TIFFHeight!tempTxt!
 @echo Output File Generated: !outputFile!
 @echo TIFF Width: !theOutputWidth!px
 @echo TIFF Height: !theOutputHeight!px
-IF EXIST !tempVideo! DEL /F !tempVideo!
+
+IF EXIST !tempVideo! DEL /F  !tempVideo!
 IF EXIST !avsFile! DEL /F !avsFile!
 IF EXIST !tempTxt! DEL /F !tempTxt!
 IF EXIST !ffindexFile! DEL /F !ffindexFile!
