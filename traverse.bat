@@ -27,36 +27,37 @@ REM TODO
 REM use input file length to automate a ramp/envelope equation
 
 SET inputFile=%1
-SET panoramaSize=%2
 
-REM cropEnvelope may be numeric ###, or otherwise it may be "ramp" or "wobble" or "linear"
-REM when it is numeric, we interpret the number as a linear position.
-REM TODO: run tests to confirm that ramp is working.
-REM TODO: adapt the RAMP to work in inverse (eg from 1080>0 instead of 0>1080)
+IF "%~2" == "" ( SET /A panSize=0 ) ELSE ( SET panSize=%2 )
+IF "%~3" == "" ( SET /A cropEnv=0 ) ELSE ( SET cropEnv=%3 )
 
-IF "%~3" NEQ "" (
-  SET cropEnvelope=%3
-) ELSE (
-  SET cropEnvelope=linear
-)
+SET "panSizeTest="&for /f "delims=0123456789" %%i in ("%2") do set panSizeTest=%%i
+IF defined panSizeTest ( SET /A panSizeIsNumeric = 0 ) ELSE ( SET /A panSizeIsNumeric = 1  )
 
-echo("!cropEnvelope!"|findstr "^[\"][-][1-9][0-9]*[\"]$ ^[\"][1-9][0-9]*[\"]$ ^[\"]0[\"]$">nul&&set /A isNum=1||set /A isNum=0
+SET "cropEnvTest="&for /f "delims=0123456789" %%k in ("%3") do set cropEnvTest=%%k
+IF defined cropEnvTest ( SET /A cropEnvIsNumeric = 0 ) ELSE ( SET /A cropEnvIsNumeric = 1  )
 
 
-IF !isNum! gtr 0 (
+
+REM Check if inputs are numeric
+
+
+
+if %cropEnvIsNumeric% EQU 1 (
   REM it is useful to mark the output file with an Id number corresponding to numeric slice position input
   REM it is especially useful to do this with predictable padding of zeroes.
   REM in this way we can further process a series of images as numbered frames in a new video.
   REM for example: ffmpeg -i img%08d.tiff output.mp4
-
-  SET /A fileID = !cropEnvelope!
   REM Add a bunch of zeroes for padding
-  SET fileID=0000000!fileID!
   REM only keep the final 8 digits ... should be plenty
+  SET /A fileID = !cropEnv!
+  SET fileID=0000000!fileID!
   SET fileID=!fileID:~-8!
 ) else (
-  REM if we dont have numeric input it remains useful to mark output with the string cropEnvelope
-  SET fileID = !cropEnvelope!
+  REM set default in case it is blank.
+  IF [!cropEnv!] EQU [] ( SET cropEnv=linear )
+  REM if we dont have numeric input it remains useful to mark output with the string cropEnv
+  SET fileID = !cropEnv!
 )
 
 FOR /F %%i in ("%1") do @SET baseName=%%~ni
@@ -64,80 +65,115 @@ SET avsFile=!baseName!_!fileID!.avs
 SET outputFile=!baseName!_!fileID!.tiff
 SET tempVideo=!baseName!_!fileID!.avi
 SET tempFolder=!baseName!_!fileID!_slices
-SET tempTxt=!inputFile!_!fileID!_tmp.txt
 SET ffindexFile=!inputFile!_!fileID!.ffindex
 SET vbsFile=!inputFile!_!fileID!_eval.vbs
 SET theWidth=1
 SET theHeight=1
 SET theRotation=0
-SET theOptimalRotation=0
 SET cropEquation=
 SET cropOption=
-SET cropOptionTwo=
-SET smushOption=
+SET tileOption=
 SET rotateOption=
 SET theOutputWidth=
 
+:frameRate
+for /f "tokens=3 delims=:. " %%j in ( 'mediainfo -f !inputFile! ^|find "Frame rate"' ) do (
+  SET /A theFrameRate=%%j
+  goto:frameRateMode
+)
+:frameRateMode
+for /f "tokens=4 skip=1 delims=: " %%j in ( 'mediainfo -f !inputFile! ^|find "Frame rate mode"' ) do (
+  SET theFrameRateMode=%%j
+  goto:frameCount
+)
+:frameCount
+for /f "tokens=3 delims=: " %%j in ( 'mediainfo -f !inputFile! ^|find "Frame count"' ) do (
+  SET /A theFrameCount=%%j
+  goto :duration
+)
+:duration
+for /f "tokens=2 delims=: " %%j in ( 'mediainfo -f !inputFile! ^|find "Duration"' ) do (
+  SET /A theDuration=%%j
+  goto :rotation
+)
+:rotation
+for /f "tokens=2 delims=:. " %%j in ( 'mediainfo -f !inputFile! ^|find "Rotation"' ) do (
+  SET theRotation=%%j
+  goto :height
+)
+:height
+for /f "tokens=2 delims=: " %%j in ( 'mediainfo -f !inputFile! ^|find "Height"' ) do (
+  SET /A theHeight=%%j
+  goto :width
+)
+:width
+for /f "tokens=2 delims=: " %%j in ( 'mediainfo -f !inputFile! ^|find "Width"' ) do (
+  SET /A theWidth=%%j
+  goto :pixelAspectRatio
+)
+:pixelAspectRatio
+for /f "tokens=4 delims=: " %%j in ( 'mediainfo -f !inputFile! ^|find "Pixel aspect ratio"' ) do (
+  SET thePixelAspectRatio=%%j
+  goto :displayAspectRatio
+)
+:displayAspectRatio
+for /f "tokens=4 delims=: " %%j in ( 'mediainfo -f !inputFile! ^|find "Display aspect ratio"' ) do (
+  SET theDisplayAspectRatio=%%j
+  goto :continue
+)
+:continue
 
-REM Fetch info about duration, frame rate, frame count, etc
-DEL !vbsFile! >nul 2>&1
-@ECHO WScript.Echo Eval^(WScript.Arguments^(0^)^) > "!vbsFile!"
-REM get duration and framerate info from the input file using mediainfo
-mediainfo --Inform="Video;%%Duration%%" !inputFile! > DUR!tempTxt!
-SET /p theDuration=<DUR!tempTxt!
-DEL DUR!tempTxt!
-mediainfo --Inform="Video;%%FrameRate%%" !inputFile! > FR!tempTxt!
-SET /p theFrameRate=<FR!tempTxt!
-DEL FR!tempTxt!
-REM derive (approximate) frame count from duration and frame rate
-FOR /f %%n in ('cscript //nologo !vbsFile! "CInt((!theDuration!/1000)*!theFrameRate!)"') do ( SET theFrameCount=%%n )
-REM output calculated values
-@echo Duration: !theDuration! milliseconds ^(via mediainfo^)
-@echo FrameRate: !theFrameRate! frames per second ^(via mediainfo^)
-@echo Frame Count: !theFrameCount! frames ^(calculated^)
+@echo.
+@echo ==========================
+@echo Input file !inputFile!:
+@echo ==========================
+@echo !theFrameRate! frames per second
+@echo !theFrameRateMode! frame rate mode
+@echo !theFrameCount! frames
+@echo !theDuration! milliseconds (duration)
+@echo !theRotation! degrees (rotation)
+@echo !theHeight! px (height)
+@echo !theWidth! px (width)
+@echo !thePixelAspectRatio! (pixel aspect ratio)
+@echo !theDisplayAspectRatio! (display aspect ratio)
 
+
+REM given the limits of PHotoshop, if there are more than 300,000 frames  we might impose a limit.
 
 REM if a desired panorama size is given, frame-interpolate the Video on the fly by generating an .avs script
-REM a panoramaSize of 0 is interpreted as "match the frame count"
-IF "%~2" NEQ "" (
+REM a panSize of 0 is interpreted as "match the frame count"
 
+@echo.
+@echo ==========================
+@echo Panorama
+@echo ==========================
+if %panSizeIsNumeric% EQU 1 (
 
-    if !panoramaSize! EQU 0 (
-      @echo Default Panorama size requested via zero parameter. Frame count will be used.
+    REM if 0 is given for panSize, we will use the frameCount.
+    if %panSize% EQU 0 (
+      @echo Default Panorama size requested via zero parameter.
+      @echo Panorama size set to match frame count: !theFrameCount! frames
+      SET /A panSize=%theFrameCount%
     ) else (
-      @echo Requested panorama size: !panoramaSize!
+      @echo Requested panorama size: !panSize!
     )
 
-
-    REM we will need vbscript to do floating point math.
-    REM therefore step 1 is to create a vbs script
-    REM start with a clean slate
-
-
-    REM if 0 is given for panoramaSize, we will use the frameCount.
-    if !panoramaSize! EQU 0 (
-        @echo Panorama size set to !theFrameCount!
-        SET panoramaSize=!theFrameCount!
-    )
-
-    REM if the framecount is already large enough
-    REM (i.e. if the framecount meets or exceeds the desired panorama size)
-    REM then we dont need to do any interpolation
-    FOR /f %%n in ('cscript //nologo !vbsFile! "!panoramaSize!>!theFrameCount!"') do (
-      SET doInterpolation=%%n
-    )
-
-    IF !doInterpolation! EQU 0 (
-      @echo Frame count !theFrameCount! already meets or exeeds the desired panorama size !panoramaSize!
+    IF %theFrameCount% GTR %panSize% (
+      @echo Frame count !theFrameCount! already meets or exeeds the desired panorama size !panSize!
       @echo No need for any frame interpolation.
     ) ELSE (
-      @ECHO Framecount !theFrameCount! is less than the desired panorama size !panoramaSize!
+      @ECHO Framecount !theFrameCount! is less than the desired panorama size !panSize!
       @ECHO Therefore we will do some frame interpolation.
       REM calculate framerate for interpolation to achieve desired panorama size
-      FOR /f %%n in ('cscript //nologo !vbsFile! "CInt((!panoramaSize!/!theFrameCount!)*!theFrameRate!)"') do (  SET theNewFrameRate=%%n  )
+
+      REM the /A flag auto resolves variables
+      SET /A Result = panSize*theFrameRate
+      SET /A theNewFrameRate = Result/theFrameCount
+
+      REM FOR /f %%n in ('cscript //nologo !vbsFile! "CInt((!panSize!/!theFrameCount!)*!theFrameRate!)"') do (  SET theNewFrameRate=%%n  )
        REM output the calculated values
 
-       @echo Desired Panorama Size: !panoramaSize! ^(via input^)
+       @echo Desired Panorama Size: !panSize! ^(via input^)
        @echo New Frame Rate: !theNewFrameRate! ^(calculated^)
 
        REM Use AviSynth frame server for frame interpolation
@@ -155,59 +191,55 @@ IF "%~2" NEQ "" (
        @echo created !avsFile! to support frame interpolation.
        @echo changing frame rate from !theFrameRate! to !theNewFrameRate!
        SET inputFile=!avsFile!
+       REM avs files dont have rotation
+       SET theRotation=0
+
     )
+
+) ELSE (
+  @echo Paramater not supplied for panorama size.
+  @echo Panorama size set to match frame count: !theFrameCount! frames
+  SET /A panSize=%theFrameCount%
 )
 
-REM calcuate width of input file
-ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=s=x:p=0 !inputFile! > !tempTxt!
-set /p theWidth= < !tempTxt!
-@echo video width for !inputFile! is !theWidth!px ^(via ffprobe^)
-del !tempTxt!
 
-REM calcuate height of input file
-ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=s=x:p=0 !inputFile! > !tempTxt!
-set /p theHeight= < !tempTxt!
-@echo video height for !inputFile! is !theHeight!px ^(via ffprobe^)
-del !tempTxt!
+REM we assume that the avs file has the same width height and rotation as the original.
 
-REM calcuate rotation of input file
-ffprobe -loglevel error -select_streams v:0 -show_entries stream_tags=rotate -of default=nw=1:nk=1 -i !inputFile! > !tempTxt!
-set /p theRotation= < !tempTxt!
-@echo video rotation for !inputFile! is !theRotation! degrees ^(via ffprobe^)
-del !tempTxt!
+
 
 
 REM If we have a numeric value for the cross section slice Position, use it.
 REM Otherwise default to a cross section are taken in the middle of the video
 REM this position is either half the width, or half the height
+@echo.
+@echo ==========================
+@echo Slicing
+@echo ==========================
+if %cropEnvIsNumeric% EQU 1 (
 
-
-
-
-IF !isNum! gtr 0 (
-  @echo Provided numeric slice position !cropEnvelope! will inform location of cross section where applicable.
+  @echo Provided numeric slice position !cropEnv! will inform location of cross section where applicable.
   REM GEQ means greater than or equal to
 
-  IF !cropEnvelope! GEQ !theHeight! (
-    @echo Input !cropEnvelope! matches or exceeds video height !theHeight!
-    @echo Affected slices will be positioned at !theHeight! instead of !cropEnvelope!
+  IF !cropEnv! GEQ !theHeight! (
+    @echo Input !cropEnv! matches or exceeds video height !theHeight!
+    @echo Affected slices will be positioned at !theHeight! instead of !cropEnv!
     SET /A ySlicePos =  !theHeight!
   ) ELSE (
-    @echo Input !cropEnvelope! falls within the bounds of video height !theHeight!
-    @echo Affected slices will be positioned at !cropEnvelope!
-    SET /A ySlicePos =  !cropEnvelope!
+    @echo Input !cropEnv! falls within the bounds of video height !theHeight!
+    @echo Affected slices will be positioned at !cropEnv!
+    SET /A ySlicePos =  !cropEnv!
   )
 
   REM we should test whether you can actually do a slice or not on the 1st and final pixel.
   REM if not you may need to +1 or -1 as appropriate.
-  IF !cropEnvelope! GEQ !theWidth! (
-    @echo Input !cropEnvelope! matches or exceeds video width !theWidth!
-    @echo Affected slices will be positioned at !theWidth! instead of !cropEnvelope!
+  IF !cropEnv! GEQ !theWidth! (
+    @echo Input !cropEnv! matches or exceeds video width !theWidth!
+    @echo Affected slices will be positioned at !theWidth! instead of !cropEnv!
     SET /A xSlicePos = !theWidth!
   ) ELSE (
-    @echo Input !cropEnvelope! falls within the bounds of video width !theWidth!
-    @echo Affected slices will be positioned at !cropEnvelope!
-    SET /A xSlicePos = !cropEnvelope!
+    @echo Input !cropEnv! falls within the bounds of video width !theWidth!
+    @echo Affected slices will be positioned at !cropEnv!
+    SET /A xSlicePos = !cropEnv!
   )
 
 ) ELSE (
@@ -216,31 +248,28 @@ IF !isNum! gtr 0 (
   SET /A ySlicePos =  !theHeight! / 2
   SET /A xSlicePos =  !theWidth! / 2
   @echo No numeric input has been given to specify the position of any cross section
-  @echo Slicing will proceed with a centeral position
+  @echo Slicing will proceed with a central position
   @echo Horizontal slices will assume !ySlicePos! or half of !theHeight!
   @echo Vertical slices will assume !xSlicePos! or half of !theWidth!
 )
 
-
-REM calculate rotation needed for optimal hypotenuse section.
+REM TODO calculate rotation needed for optimal hypotenuse section.
 REM "Atn(height/width)*180/(4*Atn(1))"
-FOR /f %%n in ('cscript //nologo !vbsFile! "Atn(!theHeight!/!theWidth!)*180/(4*Atn(1))"') do ( SET theOptimalRotation=%%n )
-@echo Optimal Rotation is TAN-1(!theHeight!/!theWidth!)*180/PI: !theOptimalRotation!
-
+REM FOR /f %%n in ('cscript //nologo !vbsFile! "Atn(!theHeight!/!theWidth!)*180/(4*Atn(1))"') do ( SET theOptimalRotation=%%n )
+REM @echo Optimal Rotation is TAN-1(!theHeight!/!theWidth!)*180/PI: !theOptimalRotation!
 
 IF !theWidth! gtr !theHeight! (
-
 
  @echo Landscape Width=!theWidth!, Height=!theHeight!
  @echo Original file is rotated !theRotation! degrees
  IF !theRotation! EQU 90 (
   @echo Treating as if a Portrait Width=!theHeight!, Height=!theWidth!
   @echo Will transpose with Counterclockwise Rotation and Vertical flip.
-  IF "!cropEnvelope!" EQU "wobble" (
+  IF "!cropEnv!" EQU "wobble" (
     SET cropEquation=^(iw^-ow^)^/^2^+^(^(iw^-ow^)^/^2^)^*sin^(^t^)
     @echo Slicing via Dynamic Wobble: !cropEquation!
   ) ELSE (
-    IF "!cropEnvelope!" EQU "ramp" (
+    IF "!cropEnv!" EQU "ramp" (
       SET cropEquation=!theHeight!^*t^*1000^/!theDuration!
       @echo Slicing via Dynamic Ramp: !cropEquation!
     ) ELSE (
@@ -249,20 +278,18 @@ IF !theWidth! gtr !theHeight! (
       @echo Slicing vertically via fixed X Position: !ySlicePos!
     )
   )
-  SET cropOption=crop^=^2^:!theWidth!^:!cropEquation!^:^0^,^transpose^=^0
-  REM Videos can't crop below 2 px; finish the job with cropOptionTwo at the tiff stage
-  SET cropOptionTwo=crop^=^1^:!theWidth!^:0^:^0^,^transpose^=^0
+  SET cropOption=crop^=^1^:!theWidth!^:!cropEquation!^:^0^:exact^=1,^transpose^=^0
 
  ) ELSE (
   IF !theRotation! EQU 270 (
     @echo Treating as if a Portrait Width=!theHeight!, Height=!theWidth!
     @echo Slicing vertically at X Position: !ySlicePos!
     @echo Will transpose with Counterclockwise Rotation and Vertical flip.
-    IF "!cropEnvelope!" EQU "wobble" (
+    IF "!cropEnv!" EQU "wobble" (
       SET cropEquation=^(iw^-ow^)^/^2^+^(^(iw^-ow^)^/^2^)^*sin^(^t^)
       @echo Slicing via Dynamic Wobble: !cropEquation!
     ) ELSE (
-      IF "!cropEnvelope!" EQU "ramp" (
+      IF "!cropEnv!" EQU "ramp" (
         SET cropEquation=!theHeight!^*t^*1000^/!theDuration!
         @echo Slicing via Dynamic Ramp: !cropEquation!
       ) ELSE (
@@ -270,16 +297,14 @@ IF !theWidth! gtr !theHeight! (
         @echo Slicing horizontally via fixed Y Position: !ySlicePos!
       )
     )
-    SET cropOption=crop^=^2^:!theWidth!^:!cropEquation!^:^0^,^transpose^=^0
-    REM Videos can't crop below 2 px; finish the job with cropOptionTwo at the tiff stage
-    SET cropOptionTwo=crop^=^1^:!theWidth!^:0^:0^,^transpose^=0
+    SET cropOption=crop^=^1^:!theWidth!^:!cropEquation!^:^0^:exact^=1,^transpose^=^0
   ) ELSE (
     REM if we got here then there is no rotation (video is standard)
-    IF "!cropEnvelope!" EQU "wobble" (
+    IF "!cropEnv!" EQU "wobble" (
       SET cropEquation=^(ih^-oh^)^/^2^+^(^(ih^-oh^)^/^2^)^*sin^(^t^)
       @echo Slicing via Dynamic Wobble: !cropEquation!
     ) ELSE (
-      IF "!cropEnvelope!" EQU "ramp" (
+      IF "!cropEnv!" EQU "ramp" (
         SET cropEquation=!theHeight!^*t^*1000^/!theDuration!
         @echo Slicing via Dynamic Ramp: !cropEquation!
       ) ELSE (
@@ -287,12 +312,10 @@ IF !theWidth! gtr !theHeight! (
         SET cropEquation=!ySlicePos!
       )
     )
-    SET cropOption=crop^=!theWidth!^:2^:^0^:!cropEquation!
-    REM Videos can't crop below 2 px; finish the job with cropOptionTwo at the tiff stage
-    SET cropOptionTwo=crop^=!theWidth!^:1^:0^:0
+    SET cropOption=crop^=!theWidth!^:1^:^0^:!cropEquation!^:exact^=1
   )
  )
- SET smushOption=^-smush^ ^-^1
+ SET tileOption=tile=1x!panSize!
  SET rotateOption=^-rotate^ ^9^0
 )
 IF !theHeight! gtr !theWidth! (
@@ -300,11 +323,11 @@ IF !theHeight! gtr !theWidth! (
  IF !theRotation! EQU 90 (
   @echo Unexpected rotation issues. You do not normally have a natively vertical video with 90 degrees rotation. wtf?
  ) ELSE (
-   IF "!cropEnvelope!" EQU "wobble" (
+   IF "!cropEnv!" EQU "wobble" (
      SET cropEquation=^(iw^-ow^)^/^2^+^(^(iw^-ow^)^/^2^)^*sin^(^t^)
      @echo Slicing via Dynamic Wobble: !cropEquation!
    ) ELSE (
-     IF "!cropEnvelope!" EQU "ramp" (
+     IF "!cropEnv!" EQU "ramp" (
        SET cropEquation=!theWidth!^*t^*1000^/!theDuration!
        @echo Slicing via Dynamic Ramp: !cropEquation!
      ) ELSE (
@@ -312,72 +335,68 @@ IF !theHeight! gtr !theWidth! (
        SET cropEquation=!xSlicePos!
      )
    )
-   SET cropOption=crop^=!theWidth!^:2^:!cropEquation!^:0
-   REM Videos can't crop below 2 px; finish the job with cropOptionTwo at the tiff stage
-   SET cropOptionTwo=crop^=!theWidth!^:1^:0^:0
+   REM SET cropOption=crop^=!theWidth!^:1^:!cropEquation!^:0:exact=1
+   SET cropOption=crop^=1^:!theHeight!^:!cropEquation!^:0:exact=1
  )
- SET smushOption=^+smush^ ^-1
+ SET tileOption=tile=!panSize!x1
 )
-@echo ==================
-@echo Crop Envelope: !cropEnvelope!
+
+@echo Crop Envelope: !cropEnv!
 @echo Crop Option: !cropOption!
-@echo Cropping Video ffmpeg -i !inputFile! -vf !cropOption! -an !tempVideo!
 
 REM in ffmpeg you can disable audio with the -an flag
 REM in ffmpeg you can overwrite output file with the -y flag
 
-REM perhaps we should use an image sequence instead.
 REM ffmpeg -i video.webm -ss 00:00:10 -vframes 1 thumbnail.png
 REM ffmpeg -i video.webm -vf fps=!theFrameRate!
 
 @echo Creating temporary folder !tempFolder! to hold slices
 if not exist "!tempFolder!" mkdir "!tempFolder!%"
 
-REM saving to TIFF files per-frame yields 122 fps.
-REM it's faster when i don't specify a format ~130
+REM Its possible that saving to TIFF files per-frame has a lower fps than saving slices to RAW video.
+REM however it allows us to use ffmpeg for tiling the files rather than using  imagemagick.
+
+@echo Extracting One-pixel-wide TIFF slices from video.
+@echo start /W cmd /C ffmpeg -i !inputFile! -vf !cropOption! -an -y -compression_algo raw -pix_fmt rgb24 !tempFolder!/img-^%^%08d.tiff
+start /W cmd /C ffmpeg -i !inputFile! -vf !cropOption! -an -y -compression_algo raw -pix_fmt rgb24 !tempFolder!/img-%%08d.tiff
+
+@echo.
 @echo ==================
-@echo Extracting Two-pixel-wide TIFF slices from video.
-ffmpeg -i !inputFile! -vf !cropOption! -an -y -compression_algo raw -pix_fmt rgb24 !tempFolder!/img-%%08d.tiff
-
-
- REM ffmpeg -i !inputFile! -vf !cropOption! -an -vcodec rawvideo -y !tempVideo!
- REM ffmpeg -i !inputFile! -vf !cropOption! -an !tempVideo!
-rem ffmpeg -i !inputFile! -vf !cropOption! -an %%05d.ppm
-REM ffmpeg -i !tempVideo!
-REM @echo Smushing !tempVideo! into !outputFile! using !smushOption!
-rem magick convert *.ppm !smushOption! !rotateOption! !outputFile!
-
-REM Error initializing filter 'tile' with args '1x677:margin=-1'
+@echo Tiling
 @echo ==================
-@echo Cropping !theFrameCount! TIFFs into One-pixel slices
-ffmpeg -i !tempFolder!/img-%%08d.tiff -filter:v "!cropOptionTwo!" !tempFolder!/img-%%08d.tiff
+@echo Assembling !panSize! TIFFs into a single image.
+@echo start /W cmd /C ffmpeg -i !tempFolder!/img-^%^%08d.tiff -filter_complex !tileOption! !outputFile!
+REM for less verbose output use ffmpeg  -hide_banner -loglevel panic
 
-@echo ==================
-@echo Tiling !theFrameCount! TIFFs into a single image.
-ffmpeg -i !tempFolder!/img-%%08d.tiff -filter_complex tile=1x!theFrameCount! !outputFile!
+start /W cmd /C ffmpeg -i !tempFolder!/img-%%08d.tiff -filter_complex !tileOption! !outputFile!
+
 REM magick convert !tempVideo! !smushOption! !rotateOption! !outputFile!
-
+@echo.
+@echo ==================
+@echo Cleanup
 @echo ==================
 @echo Removing temporary TIFF slices.
 IF EXIST !tempFolder! DEL /F /Q !tempFolder!
 @echo Removing temporary slice folder !tempFolder!
 IF EXIST !tempFolder! RMDIR /S /Q !tempFolder!
 
-mediainfo --Inform="Image;%%Width%%" !outputFile! > TIFFWidth!tempTxt!
-SET /p theOutputWidth=<TIFFWidth!tempTxt!
-DEL TIFFWidth!tempTxt!
-mediainfo --Inform="Image;%%Height%%" !outputFile! > TIFFHeight!tempTxt!
-SET /p theOutputHeight=<TIFFHeight!tempTxt!
-DEL TIFFHeight!tempTxt!
+:tiffWidth
+for /f "tokens=2 delims=: " %%j in ( 'mediainfo -f !outputFile! ^|find "Width"' ) do (
+  SET  theOutputWidth=%%j
+  goto:tiffHeight
+)
+:tiffHeight
+for /f "tokens=2 delims=: " %%j in ( 'mediainfo -f !outputFile! ^|find "Height"' ) do (
+  SET theOutputHeight=%%j
+  goto:conclude
+)
+:conclude
+
+IF EXIST !avsFile! DEL /F !avsFile!
+IF EXIST !ffindexFile! DEL /F !ffindexFile!
+IF EXIST !vbsFile! DEL /F !vbsFile!
 
 @echo Output File Generated: !outputFile!
 @echo TIFF Width: !theOutputWidth!px
 @echo TIFF Height: !theOutputHeight!px
-
-IF EXIST !tempVideo! DEL /F  !tempVideo!
-IF EXIST !avsFile! DEL /F !avsFile!
-IF EXIST !tempTxt! DEL /F !tempTxt!
-IF EXIST !ffindexFile! DEL /F !ffindexFile!
-IF EXIST !vbsFile! DEL /F !vbsFile!
-
 @echo Finished.
