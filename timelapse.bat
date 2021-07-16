@@ -7,7 +7,7 @@ IF "%~1"=="" (
 @echo ===========================================================
 @echo USAGE: timelapse.bat filename multiplier
 @echo filename: the name of a video file ... e.g. input.mp4
-@echo multiplier: number between 0 and 1  based on "presentation timestamp"
+@echo multiplier: output duration will be this number * input duration
 @echo ------------------------
 @echo OUTPUT: a video is generated 
 @echo the video will be named timelapse_originalname.originalextension.mp4
